@@ -1,4 +1,7 @@
 # AutoFib Locked with Hotkey
+
+<img width="891" height="886" alt="cT_cs_1184089_XAUUSD_2026-02-14_21-33-36" src="https://github.com/user-attachments/assets/5d419a8c-e200-430a-b3fe-b29a8aaa1cb2" />
+
 Indikator Fibonacci otomatis untuk cTrader dengan klik mouse untuk menentukan level harga dan shortcut kunci level.
 
 ## Fitur
@@ -14,6 +17,9 @@ Indikator Fibonacci otomatis untuk cTrader dengan klik mouse untuk menentukan le
   - Warna per level via color picker
 - Label nilai level (%) di sisi kanan garis (bisa dimatikan)
 - Nilai Low/High bertahan meski ubah parameter atau toggle lock
+
+<img width="699" height="860" alt="parameter-autofib" src="https://github.com/user-attachments/assets/b4351388-e32b-44b7-997d-409905bc5f54" />
+
 
 ## Cara Pakai
 1. Attach indikator ke chart
