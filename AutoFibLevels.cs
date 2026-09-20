@@ -1,5 +1,6 @@
 using cAlgo.API;
 using cAlgo.API.Internals;
+using System;
 using System.Linq;
 
 namespace cAlgo.Indicators
@@ -7,10 +8,26 @@ namespace cAlgo.Indicators
     [Indicator(IsOverlay = true, AccessRights = AccessRights.None)]
     public class AutoFibLockedWithHotkey : Indicator
     {
-        // Static untuk mempertahankan nilai Low/High
         private static double _savedLow = double.NaN;
         private static double _savedHigh = double.NaN;
 
+        public enum FibDirection
+        {
+            LowToHigh,
+            HighToLow
+        }
+
+        // ==================== SETTINGS ====================
+        [Parameter("Direction", Group = "Settings", DefaultValue = FibDirection.LowToHigh)]
+        public FibDirection Direction { get; set; }
+
+        [Parameter("Lock Hotkey", Group = "Hotkeys", DefaultValue = "L")]
+        public string LockHotkey { get; set; }
+
+        [Parameter("Direction Hotkey", Group = "Hotkeys", DefaultValue = "D")]
+        public string DirectionHotkey { get; set; }
+
+        // ==================== COLORS ====================
         [Parameter("High Level Color (Unlocked)", Group = "Colors", DefaultValue = "Red")]
         public Color HighColorUnlocked { get; set; }
 
@@ -20,6 +37,7 @@ namespace cAlgo.Indicators
         [Parameter("Low Level Color (Unlocked)", Group = "Colors", DefaultValue = "Blue")]
         public Color LowColorUnlocked { get; set; }
 
+        // ==================== APPEARANCE ====================
         [Parameter("Line Style", Group = "Appearance", DefaultValue = LineStyle.Dots)]
         public LineStyle FibLineStyle { get; set; }
 
@@ -32,7 +50,7 @@ namespace cAlgo.Indicators
         [Parameter("Label Font Size", Group = "Labels", DefaultValue = 9, MinValue = 6, MaxValue = 14)]
         public int LabelFontSize { get; set; }
 
-        // Custom Levels (maksimal 5)
+        // ==================== CUSTOM LEVELS ====================
         [Parameter("Enable Level 1", Group = "Custom Levels", DefaultValue = true)]
         public bool EnableLevel1 { get; set; }
 
@@ -86,17 +104,74 @@ namespace cAlgo.Indicators
         {
             Chart.MouseDown += Chart_MouseDown;
 
-            bool added = Chart.AddHotkey(ToggleLock, Key.K, ModifierKeys.None);
-            Print(added ? "Hotkey 'K' aktif." : "Hotkey 'K' gagal.");
+            // --- Register Hotkeys ---
+            bool lockOk = TryAddHotkey(LockHotkey, ToggleLock, "Lock");
+            bool dirOk  = TryAddHotkey(DirectionHotkey, ToggleDirection, "Direction");
+
+            // --- Tampilkan status di chart ---
+            ShowHotkeyStatusOnChart(lockOk, dirOk);
 
             currentLow = _savedLow;
             currentHigh = _savedHigh;
 
-            Print("AutoFib siap. Status lock: " + (isLocked ? "TERKUNCI" : "TIDAK TERKUNCI"));
+            Print("AutoFib siap. Lock: " + (isLocked ? "TERKUNCI" : "TIDAK TERKUNCI") +
+                  " | Direction: " + Direction);
 
             if (!double.IsNaN(currentLow) && !double.IsNaN(currentHigh) && currentHigh > currentLow)
             {
                 DrawOrUpdateLevels();
+            }
+        }
+
+        // Mencoba menambahkan hotkey, return true jika berhasil
+        private bool TryAddHotkey(string keyName, Action<ChartKeyboardEventArgs> action, string featureName)
+        {
+            if (string.IsNullOrWhiteSpace(keyName))
+            {
+                Print($"Hotkey {featureName} kosong / tidak diisi.");
+                return false;
+            }
+
+            if (!Enum.TryParse(keyName.Trim().ToUpper(), true, out Key key))
+            {
+                Print($"Hotkey '{keyName}' tidak valid untuk {featureName}.");
+                return false;
+            }
+
+            bool added = Chart.AddHotkey(action, key, ModifierKeys.None);
+
+            if (added)
+                Print($"Hotkey '{keyName.ToUpper()}' ({featureName}) aktif.");
+            else
+                Print($"Hotkey '{keyName.ToUpper()}' ({featureName}) GAGAL. Sudah digunakan oleh cBot/indikator lain.");
+
+            return added;
+        }
+
+        // Tampilkan status hotkey di chart (pojok kiri atas)
+        private void ShowHotkeyStatusOnChart(bool lockOk, bool dirOk)
+        {
+            // Hapus teks lama dulu
+            Chart.RemoveObject("HotkeyStatus");
+
+            string lockKey = string.IsNullOrWhiteSpace(LockHotkey) ? "?" : LockHotkey.Trim().ToUpper();
+            string dirKey  = string.IsNullOrWhiteSpace(DirectionHotkey) ? "?" : DirectionHotkey.Trim().ToUpper();
+
+            string text;
+
+            if (lockOk && dirOk)
+            {
+                text = $"AutoFib | Lock: [{lockKey}]  Direction: [{dirKey}]";
+                Chart.DrawStaticText("HotkeyStatus", text, VerticalAlignment.Top, HorizontalAlignment.Left, Color.LimeGreen);
+            }
+            else
+            {
+                string problems = "";
+                if (!lockOk) problems += $"Lock [{lockKey}] GAGAL (sudah dipakai)  ";
+                if (!dirOk)  problems += $"Direction [{dirKey}] GAGAL (sudah dipakai)";
+
+                text = $"AutoFib WARNING: {problems.Trim()}  → Ganti di Parameter";
+                Chart.DrawStaticText("HotkeyStatus", text, VerticalAlignment.Top, HorizontalAlignment.Left, Color.OrangeRed);
             }
         }
 
@@ -105,16 +180,45 @@ namespace cAlgo.Indicators
             isLocked = !isLocked;
             Print("Lock: " + (isLocked ? "TERKUNCI" : "TIDAK TERKUNCI"));
 
+            // Update teks status di chart juga
+            UpdateLockStatusOnChart();
+
             if (!double.IsNaN(currentLow) && !double.IsNaN(currentHigh) && currentHigh > currentLow)
             {
                 DrawOrUpdateLevels();
             }
         }
 
+        private void ToggleDirection(ChartKeyboardEventArgs args)
+        {
+            Direction = Direction == FibDirection.LowToHigh
+                ? FibDirection.HighToLow
+                : FibDirection.LowToHigh;
+
+            Print("Direction: " + Direction);
+
+            if (!double.IsNaN(currentLow) && !double.IsNaN(currentHigh) && currentHigh > currentLow)
+            {
+                DrawOrUpdateLevels();
+            }
+        }
+
+        private void UpdateLockStatusOnChart()
+        {
+            // Update teks status agar menampilkan kondisi lock terkini
+            string lockKey = string.IsNullOrWhiteSpace(LockHotkey) ? "?" : LockHotkey.Trim().ToUpper();
+            string dirKey  = string.IsNullOrWhiteSpace(DirectionHotkey) ? "?" : DirectionHotkey.Trim().ToUpper();
+
+            string lockState = isLocked ? "TERKUNCI" : "BEBAS";
+            string text = $"AutoFib | Lock: [{lockKey}] ({lockState})  Direction: [{dirKey}] ({Direction})";
+
+            Chart.DrawStaticText("HotkeyStatus", text, VerticalAlignment.Top, HorizontalAlignment.Left,
+                isLocked ? Color.Orange : Color.LimeGreen);
+        }
+
         private void Chart_MouseDown(ChartMouseEventArgs obj)
         {
             if (isLocked) return;
-
             if (obj.ChartArea == null) return;
 
             double price = obj.YValue;
@@ -123,6 +227,7 @@ namespace cAlgo.Indicators
             {
                 currentHigh = price;
                 _savedHigh = currentHigh;
+
                 if (!double.IsNaN(currentLow) && currentHigh > currentLow)
                     DrawOrUpdateLevels();
             }
@@ -130,6 +235,7 @@ namespace cAlgo.Indicators
             {
                 currentLow = price;
                 _savedLow = currentLow;
+
                 if (!double.IsNaN(currentHigh) && currentHigh > currentLow)
                     DrawOrUpdateLevels();
             }
@@ -137,6 +243,8 @@ namespace cAlgo.Indicators
 
         public override void Calculate(int index)
         {
+            if (isLocked) return;   // penting: jangan update saat locked
+
             if (double.IsNaN(currentLow) || double.IsNaN(currentHigh)) return;
             if (index != Bars.Count - 1) return;
 
@@ -162,45 +270,61 @@ namespace cAlgo.Indicators
             }
         }
 
+        private double GetPriceFromLevel(double fibLevel)
+        {
+            double diff = currentHigh - currentLow;
+            if (diff <= 0) return currentLow;
+
+            if (Direction == FibDirection.LowToHigh)
+                return currentLow + diff * fibLevel;
+            else
+                return currentHigh - diff * fibLevel;
+        }
+
         private void DrawOrUpdateLevels()
         {
             double diff = currentHigh - currentLow;
             if (diff <= 0) return;
 
-            // Hapus label lama
             RemoveAllLabels();
 
             // High (100%)
             Color highColor = isLocked ? DarkenColor(HighColorUnlocked, 0.5) : HighColorUnlocked;
-            DrawOrUpdateHLine("FibHigh", currentHigh, highColor, FibLineStyle, LineThickness);
-            if (ShowLabels) DrawLevelLabel("FibHighLabel", "100.0%", currentHigh, highColor);
+            double highPrice = GetPriceFromLevel(1.0);
+            DrawOrUpdateHLine("FibHigh", highPrice, highColor, FibLineStyle, LineThickness);
+            if (ShowLabels)
+                DrawLevelLabel("FibHighLabel", "100.0%", highPrice, highColor);
 
-            // Mid (50%) - jika tidak di-custom
+            // Mid (50%)
             if (!(EnableLevel4 && Level4Value == 0.5))
             {
                 Color midColor = isLocked ? DarkenColor(MidColorUnlocked, 0.5) : MidColorUnlocked;
-                DrawOrUpdateHLine("FibMid", currentLow + diff * 0.5, midColor, FibLineStyle, LineThickness);
-                if (ShowLabels) DrawLevelLabel("FibMidLabel", "50.0%", currentLow + diff * 0.5, midColor);
+                double midPrice = GetPriceFromLevel(0.5);
+                DrawOrUpdateHLine("FibMid", midPrice, midColor, FibLineStyle, LineThickness);
+                if (ShowLabels)
+                    DrawLevelLabel("FibMidLabel", "50.0%", midPrice, midColor);
             }
 
             // Low (0%)
             Color lowColor = isLocked ? DarkenColor(LowColorUnlocked, 0.5) : LowColorUnlocked;
-            DrawOrUpdateHLine("FibLow", currentLow, lowColor, FibLineStyle, LineThickness);
-            if (ShowLabels) DrawLevelLabel("FibLowLabel", "0.0%", currentLow, lowColor);
+            double lowPrice = GetPriceFromLevel(0.0);
+            DrawOrUpdateHLine("FibLow", lowPrice, lowColor, FibLineStyle, LineThickness);
+            if (ShowLabels)
+                DrawLevelLabel("FibLowLabel", "0.0%", lowPrice, lowColor);
 
             // Custom Levels
-            DrawCustomLevel(1, EnableLevel1, Level1Value, Level1ColorUnlocked, diff);
-            DrawCustomLevel(2, EnableLevel2, Level2Value, Level2ColorUnlocked, diff);
-            DrawCustomLevel(3, EnableLevel3, Level3Value, Level3ColorUnlocked, diff);
-            DrawCustomLevel(4, EnableLevel4, Level4Value, Level4ColorUnlocked, diff);
-            DrawCustomLevel(5, EnableLevel5, Level5Value, Level5ColorUnlocked, diff);
+            DrawCustomLevel(1, EnableLevel1, Level1Value, Level1ColorUnlocked);
+            DrawCustomLevel(2, EnableLevel2, Level2Value, Level2ColorUnlocked);
+            DrawCustomLevel(3, EnableLevel3, Level3Value, Level3ColorUnlocked);
+            DrawCustomLevel(4, EnableLevel4, Level4Value, Level4ColorUnlocked);
+            DrawCustomLevel(5, EnableLevel5, Level5Value, Level5ColorUnlocked);
         }
 
-        private void DrawCustomLevel(int index, bool enabled, double fibLevel, Color unlockedColor, double diff)
+        private void DrawCustomLevel(int index, bool enabled, double fibLevel, Color unlockedColor)
         {
             if (!enabled) return;
 
-            double price = currentLow + diff * fibLevel;
+            double price = GetPriceFromLevel(fibLevel);
             string name = $"FibCustom{index}";
             Color color = isLocked ? DarkenColor(unlockedColor, 0.5) : unlockedColor;
 
@@ -232,7 +356,8 @@ namespace cAlgo.Indicators
 
         private void DrawLevelLabel(string name, string text, double price, Color color)
         {
-            Chart.DrawText(name, text, Bars.Count - 5, price, color);
+            string fullText = $"{text} ({price.ToString("F" + Symbol.Digits)})";
+            Chart.DrawText(name, fullText, Bars.Count - 5, price, color);
         }
 
         private void RemoveAllLabels()
@@ -257,6 +382,7 @@ namespace cAlgo.Indicators
 
         protected override void OnDestroy()
         {
+            Chart.RemoveObject("HotkeyStatus");
             RemoveLevels();
         }
 
